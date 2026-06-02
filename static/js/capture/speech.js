@@ -124,30 +124,35 @@ function playMp3Blob(blob, generation, volume = 0.95) {
     const url = URL.createObjectURL(blob);
     const a = new Audio();
     activeAudio = a;
-    const cleanup = () => {
-      URL.revokeObjectURL(url);
+    let urlRevoked = false;
+    const safeRevoke = () => {
+      if (urlRevoked) return;
+      urlRevoked = true;
+      // Tiny delay so any in-flight fetch initiated by the audio element
+      // gets a chance to complete before we drop the blob URL.
+      setTimeout(() => {
+        try { URL.revokeObjectURL(url); } catch { /* ignore */ }
+      }, 5000);
+    };
+    const finishCleanup = () => {
+      safeRevoke();
       if (activeAudio === a) activeAudio = null;
     };
-    a.addEventListener(
-      "ended",
-      () => {
-        cleanup();
-        resolve();
-      },
-      { once: true },
-    );
-    a.addEventListener(
-      "error",
-      () => {
-        cleanup();
-        reject(new Error("audio playback error"));
-      },
-      { once: true },
-    );
+    // Revoke as soon as the element has buffered enough audio. Per spec
+    // the element holds its own reference to the decoded data after
+    // loadeddata, so the URL itself is no longer needed.
+    a.addEventListener("loadeddata", safeRevoke, { once: true });
+    a.addEventListener("ended", () => { finishCleanup(); resolve(); }, { once: true });
+    a.addEventListener("error", () => { finishCleanup(); reject(new Error("audio playback error")); }, { once: true });
     a.src = url;
     a.volume = volume;
     a.play().catch((e) => {
-      cleanup();
+      // DO NOT revoke here — autoplay rejection (NotAllowedError, the most
+      // common cause) fires while the element is still loading the blob.
+      // Revoking now turns the in-flight fetch into ERR_FILE_NOT_FOUND.
+      // The "error"/"ended" listeners (or the 5 s safety timer) will clean
+      // up eventually.
+      if (activeAudio === a) activeAudio = null;
       reject(e);
     });
   });
