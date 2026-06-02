@@ -659,7 +659,7 @@ export function attachMeasureHandler() {
         throw new Error(formatMeasureHttpError(res, text));
       }
       const data = await res.json();
-      console.log("[PointsX] Full model output:", data);
+      console.log("[FitMeasure AI] Full model output:", data);
       const measurements = orderMeasurementsManual(data.measurements ?? []);
       if (!measurements.length) {
         captureState.lastMockResponse = null;
