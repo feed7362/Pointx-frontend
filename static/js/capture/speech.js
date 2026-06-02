@@ -20,6 +20,12 @@ let activeAudio = null;
 const audioBlobCache = new Map();
 const AUDIO_CACHE_MAX = 48;
 
+/** Session-level kill switch — once the server returns 503 (or fetch fails
+ * entirely) we stop bothering /api/tts for the rest of the page lifetime
+ * and go straight to the browser fallback. Avoids dozens of red errors in
+ * DevTools when POINTSX_TTS_DISABLE=1 is set on the backend. */
+let serverTtsDisabledForSession = false;
+
 /** TTS endpoint — uses POINTSX_API_BASE (injected by Vercel build) when set,
  * otherwise falls back to the page origin (single-container dev mode). */
 function ttsEndpointUrl() {
@@ -52,6 +58,7 @@ function stopActiveAudio() {
 }
 
 async function fetchTtsMp3Blob(text) {
+  if (serverTtsDisabledForSession) throw new Error("tts:disabled-this-session");
   const cached = audioBlobCache.get(text);
   if (cached) return cached;
   const ac = new AbortController();
@@ -63,7 +70,11 @@ async function fetchTtsMp3Blob(text) {
       body: JSON.stringify({ text }),
       signal: ac.signal,
     });
-    if (!res.ok) throw new Error(`tts:${res.status}`);
+    if (!res.ok) {
+      // 503 = backend has POINTSX_TTS_DISABLE=1. Stop trying for the session.
+      if (res.status === 503) serverTtsDisabledForSession = true;
+      throw new Error(`tts:${res.status}`);
+    }
     const blob = await res.blob();
     if (blob.size < 32) throw new Error("tts:empty");
     const head = new Uint8Array(await blob.slice(0, 4).arrayBuffer());
@@ -73,6 +84,13 @@ async function fetchTtsMp3Blob(text) {
     audioBlobCache.set(text, blob);
     trimAudioBlobCache();
     return blob;
+  } catch (err) {
+    // Network-level failures (CORS, DNS, blocked) — also disable for the
+    // session so we don't keep hammering the dead endpoint.
+    if (err?.name === "TypeError" || err?.name === "AbortError") {
+      serverTtsDisabledForSession = true;
+    }
+    throw err;
   } finally {
     window.clearTimeout(to);
   }
