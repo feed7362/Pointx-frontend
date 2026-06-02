@@ -20,10 +20,14 @@ let activeAudio = null;
 const audioBlobCache = new Map();
 const AUDIO_CACHE_MAX = 48;
 
-/** Same-origin TTS endpoint (avoids bad resolution from import maps / subpaths). */
+/** TTS endpoint — uses POINTSX_API_BASE (injected by Vercel build) when set,
+ * otherwise falls back to the page origin (single-container dev mode). */
 function ttsEndpointUrl() {
-  if (typeof window === "undefined" || !window.location?.origin) return "/api/tts";
-  return `${window.location.origin}/api/tts`;
+  if (typeof window === "undefined") return "/api/tts";
+  const apiBase = (window.POINTSX_API_BASE || "").replace(/\/+$/, "");
+  if (apiBase) return `${apiBase}/api/tts`;
+  if (window.location?.origin) return `${window.location.origin}/api/tts`;
+  return "/api/tts";
 }
 
 const TTS_FETCH_TIMEOUT_MS = 8000;
